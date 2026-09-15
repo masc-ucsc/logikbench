@@ -6,6 +6,8 @@ Three flavors:
     (Yosys synthesis plus OpenSTA timing) for a single-liberty PDK;
   * 'tardigrade_<pdk>' (e.g. 'tardigrade_freepdk45') -> the same lbflow path
     with tardigrade as the synthesis mapper instead of yosys;
+  * 'lhd_<pdk>' (e.g. 'lhd_asap7') -> LiveHD synthesis plus OpenSTA timing;
+  * 'lhd' -> LiveHD synthesis with its default Liberty and no timing stage;
   * 'sc_<pdk>' (e.g. 'sc_asap7') -> the official SC target (PDK + libraries +
     scenarios) run through SiliconCompiler's 'asicflow'. SC names its setup
     modules '<pdk>_demo', so a pdk->module lookup maps 'sc_asap7'->'asap7_demo'.
@@ -19,18 +21,22 @@ is injected as LB_CLK_NS. Benchmarks that ship no SDC run unconstrained.
 import glob
 import importlib
 import os
+import math
+import re
 import pkgutil
 import shutil
 import sys
 
 import siliconcompiler.targets as sc_targets
 from siliconcompiler import ASIC
+from siliconcompiler.metrics import ASICMetricsSchema
 from logikbench.flows.pnr.asic import ASICPnR
 from logikbench.flows.sta.asic import ASICSta
 from lambdalib.ramlib import RAMTechLib
 
 from logikbench.flows.syn import ASICSynthesis
-from logikbench.common import (_set_range, _quiet, read_netlist_cache,
+from logikbench.common import (_base_project, _set_range, _quiet,
+                               read_netlist_cache,
                                write_netlist_cache)
 
 # The default clock period is NOT overridden here: when 'lb --clk' is not given
@@ -95,6 +101,7 @@ _LBFLOW_PDKS = list(_SC_PDKS)
 SC_TARGETS = [f"sc_{pdk}" for pdk in _SC_PDKS]
 YOSYS_TARGETS = [f"yosys_{pdk}" for pdk in _LBFLOW_PDKS]
 TARDIGRADE_TARGETS = [f"tardigrade_{pdk}" for pdk in _LBFLOW_PDKS]
+LHD_TARGETS = [f"lhd_{pdk}" for pdk in _LBFLOW_PDKS]
 # sta_<pdk> -> OpenSTA on lb syn's cached netlist (no synth/P&R)
 STA_TARGETS = [f"sta_{pdk}" for pdk in _SC_PDKS]
 
@@ -169,6 +176,35 @@ def _mapping_liberties(proj):
     return sorted(set(libs))
 
 
+def _dont_use_cells(proj):
+    """Liberty cell-name patterns the mapper must never use.
+
+    Exactly the groups the yosys ASIC script hands `abc -dont_use` (see
+    tools/yosys/scripts/asic/synthesis_asic.tcl): the PDK's dontuse list plus
+    its hold, clock-buffer, clock-gate and clock-logic cells. LiveHD reads
+    no PDK config, so the lhd task stamps these into the staged Liberty as
+    `dont_use : true` and pass.abc skips them like any Liberty-marked cell.
+    """
+    lib = proj.get("library", proj.get("asic", "mainlib"), field="schema")
+    patterns = []
+    for group in ("dontuse", "hold", "clkbuf", "clkgate", "clklogic"):
+        if lib.valid("asic", "cells", group):
+            patterns += list(lib.get("asic", "cells", group) or [])
+    return sorted(set(patterns))
+
+
+def _driver_cell(proj):
+    """The PDK's yosys driving cell (`set_driving_cell` in abc's constraints).
+
+    Handed to LiveHD as `abc.boundary_drive` so both mappers buffer a primary
+    input's fanout against the same driver.
+    """
+    lib = proj.get("library", proj.get("asic", "mainlib"), field="schema")
+    if lib.valid("tool", "yosys", "driver_cell"):
+        return lib.get("tool", "yosys", "driver_cell") or ""
+    return ""
+
+
 def _macro_liberties(proj):
     """Setup-corner NLDM liberties of the ASIC macro libraries (e.g. SRAM).
 
@@ -235,6 +271,21 @@ def _bench_sdc(design):
     return files[0] if files else ""
 
 
+def _lhd_delay_ps(pdk, clk_ns):
+    """Use the same literal default clock as the PDK SDC, or lb --clk (ns)."""
+    if clk_ns is None:
+        with open(_tech_tcl(pdk)) as stream:
+            match = re.search(r"^\s*set\s+LB_CLK_NS\s+([0-9.eE+-]+)\s*(?:#.*)?$",
+                              stream.read(), re.MULTILINE)
+        if not match:
+            raise ValueError(f"{pdk} has no literal LB_CLK_NS default; supply --clk in ns")
+        clk_ns = float(match.group(1))
+    if not math.isfinite(clk_ns) or clk_ns <= 0:
+        raise ValueError("LHD mapping clock must be a positive finite period in ns")
+    # LiveHD's ABC delay option is always ps, even with a ns-unit Liberty.
+    return f"{clk_ns * 1000:g}"
+
+
 def _write_sc_wrapper(builddir, name, target, clk_ns, bench_sdc):
     """Write the SDC wrapper (always) and return its (absolute) path.
 
@@ -295,17 +346,17 @@ def _setup_asic_project(design, setup_target, builddir, quiet, timeout, clk_ns):
 
 def _run_lbflow(design, target, options, builddir, quiet, start, stop, timeout,
                 clk_ns=None, lintonly=False):
-    """ASIC flow: Synthesis + SC OpenSTA timing (synth + STA, no P&R).
+    """ASIC flow: synthesis plus the shared SC OpenSTA timing, without P&R.
 
     The target '<tool>_<pdk>' selects the mapper: 'yosys_<pdk>' runs yosys,
-    'tardigrade_<pdk>' runs tardigrade. Both reuse the matching SC target
+    'tardigrade_<pdk>' runs tardigrade, and 'lhd_<pdk>' runs LiveHD. All reuse
+    the matching SC target
     (via the pdk->module lookup) for PDK/library/single-corner setup, then run
-    the two-node synth+timing flow. SC's TimingTask records the full metric set
-    (fmax, cells, cellarea, nets, pins, registers, slacks, power, ...) from the
-    mapped netlist, so the two mappers are directly comparable. 'options' pass
+    the same SC OpenSTA timing node. LiveHD's mapped SystemVerilog output is
+    normalized to equivalent structural Verilog without remapping it. 'options' pass
     through to the active mapper verbatim.
     """
-    tool, pdk = target.split("_", 1)   # token equals the mapper name (yosys|tardigrade)
+    tool, pdk = target.split("_", 1)
     proj = _setup_asic_project(design, _SC_MODULE[pdk], builddir, quiet,
                                timeout, clk_ns)
     proj.set_flow(ASICSynthesis(tool=tool))
@@ -333,14 +384,43 @@ def _run_lbflow(design, target, options, builddir, quiet, start, stop, timeout,
         # Feed it the canonical stem so both mappers resolve the PDK identically
         # rather than the tardigrade path re-deriving it from a renamed token.
         synvar("pdk", _SC_MODULE[pdk][:-len("_demo")])
+    elif tool == "lhd":
+        synvar("pdk", pdk)
+        synvar("delay_ps", _lhd_delay_ps(pdk, clk_ns))
+        synvar("library_cache", os.path.abspath(os.path.dirname(builddir)))
+        synvar("opensta_netlist", True)
+        synvar("macrolib", _macro_liberties(proj))
+        synvar("blackbox", _blackbox_verilog(proj))
+        synvar("dontuse", _dont_use_cells(proj))
+        synvar("driver_cell", _driver_cell(proj))
     if options:
-        synvar("options", options.split())
+        synvar("options", options.split() if tool == "tardigrade" else options)
     if lintonly:
         # elaborate-only: the mapper parses the RTL then stops before synth;
         # stop after the synthesis node so the timing node (no netlist) is
         # skipped.
         synvar("lintonly", True)
         stop = "synthesis"
+    _set_range(proj, start, stop)
+    proj.run()
+    if not quiet:
+        proj.summary()
+
+
+def _run_lhd_default(design, options, builddir, quiet, start, stop, timeout,
+                     lintonly=False):
+    """Run LiveHD's self-contained synthesis without an LB PDK target.
+
+    `lhd synth` resolves its own default Liberty (normally through
+    HAGENT_TECH_DIR). With no PDK target there is no comparable SC timing
+    corner, so this mode reports synthesis metrics only.
+    """
+    proj = _base_project(design, builddir, ASICMetricsSchema(), quiet, timeout)
+    proj.add_fileset("rtl")
+    proj.set_flow(ASICSynthesis(tool="lhd", timing=False))
+    proj.set("tool", "lhd", "task", "synthesis", "var", "options", options)
+    proj.set("tool", "lhd", "task", "synthesis", "var", "lintonly",
+             bool(lintonly))
     _set_range(proj, start, stop)
     proj.run()
     if not quiet:

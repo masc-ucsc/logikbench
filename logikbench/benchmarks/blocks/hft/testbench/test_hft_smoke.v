@@ -47,12 +47,11 @@ module test_hft_smoke;
    integer	 j;
    task init_state;
       begin
+	 // the DUT book and positions come out of nreset at zero
 	 for (j=0;j<DEPTH;j=j+1) begin
 	    rbp[j]=0; rbq[j]=0; rap[j]=0; raq[j]=0;
-	    dut.u_book.bid_mem[j]=0; dut.u_book.ask_mem[j]=0;  // model BRAM=0
 	 end
 	 for (j=0;j<NSYM;j=j+1) rpos[j]=0;
-	 dut.u_book.bid_rd=0; dut.u_book.ask_rd=0;
 	 qhead=0; qtail=0;
       end
    endtask

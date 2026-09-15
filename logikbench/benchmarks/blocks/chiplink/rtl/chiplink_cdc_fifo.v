@@ -71,8 +71,9 @@ module chiplink_cdc_fifo
       end
    end
 
-   // full: next write gray equals read gray with the two MSBs inverted
-   assign wr_full = (wgray_nxt ==
+   // Compare the current pointer: wgray_nxt depends on do_wr, which is gated
+   // by wr_full. Using it here would create a combinational feedback loop.
+   assign wr_full = (wgray ==
                      {~rgray_s2[AW:AW-1], rgray_s2[AW-2:0]});
 
    // ---- read domain ----

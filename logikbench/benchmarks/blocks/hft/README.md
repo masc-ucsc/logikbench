@@ -15,11 +15,13 @@ box in the block diagram:
 1. **hft_parser** - decodes the 512-bit market-data word into
    `{msg_type, symbol_id, side, level, price, qty}` using a simplified,
    self-defined binary layout (not any proprietary exchange protocol).
-2. **hft_book** - a level-indexed limit order book. Per side (bid/ask), a
-   simple dual-port RAM (inferred BRAM) stores `{price,qty}` indexed by
-   `{symbol, level}`. Each update/delete writes the addressed level and reads
-   out the top of book (level 0); a level-0 write is forwarded so the emitted
-   top of book reflects the current update.
+2. **hft_book** - a limit order book. Per side (bid/ask), one `{price,qty}`
+   register per symbol holds the top of book (level 0), built as an explicit
+   flop file (one generated bank per symbol) read through a mux over the
+   concatenated registers, so it maps to a register file on every target
+   instead of inferring a RAM. An update/delete addressing level 0 writes the
+   addressed symbol and the top of book is read out; a level-0 write is
+   forwarded so the emitted top of book reflects the current update.
 3. **hft_feature** - computes spread (`ask-bid`), mid (`(bid+ask)/2`), size
    imbalance (`bid_qty-ask_qty`), and an imbalance-weighted fair value
    `mid + (imbalance*SKEW_K) >>> SKEW_SH` (saturated). The multiply maps to a
@@ -34,14 +36,15 @@ box in the block diagram:
 6. **hft_encoder** - packs the decision into a 512-bit order packet and
    asserts `order_packet_valid` only for real actions.
 
-Total latency is 6 cycles. Features use the top of book (level 0); deeper
-levels are stored (exercising the book memory) but not consumed by the current
-feature set.
+Total latency is 6 cycles. Features use the top of book (level 0), which is
+the only level the book ever reads back; updates addressing deeper levels are
+decoded and dropped rather than stored, so the block holds no state that no
+reader consumes.
 
-Key parameters: `NSYM` (symbols, default 32), `NLEVEL` (levels/side, default
-16, power of two), `PRICE_W` (default 32), `QTY_W` (default 16), plus strategy
-(`SKEW_K`, `SKEW_SH`, `MARGIN`, `WIDE`, `ORDER_QTY`) and risk (`POS_LIMIT`,
-`NOTIONAL_LIMIT`, `PRICE_BAND`) knobs.
+Key parameters: `NSYM` (symbols, default 32), `NLEVEL` (levels/side carried in
+the message format, default 16, power of two), `PRICE_W` (default 32), `QTY_W`
+(default 16), plus strategy (`SKEW_K`, `SKEW_SH`, `MARGIN`, `WIDE`,
+`ORDER_QTY`) and risk (`POS_LIMIT`, `NOTIONAL_LIMIT`, `PRICE_BAND`) knobs.
 
 ## Interface
 
@@ -56,13 +59,15 @@ Key parameters: `NSYM` (symbols, default 32), `NLEVEL` (levels/side, default
 
 Message layout (both directions, byte-aligned): `[7:0]` type/action,
 `[8+:SYMW]` symbol, `[16]` side, `[24+:LVLW]` level (input only),
-`[32+:PRICE_W]` price, `[64+:QTY_W]` qty. The book RAM models power-on-zero, so
-a symbol reads flat until its first update arrives.
+`[32+:PRICE_W]` price, `[64+:QTY_W]` qty. The book resets to zero, so a symbol
+reads flat until its first level-0 update arrives.
 
 ## Synthesis mapping / what it stresses
 
-- **BRAM:** the two per-side order-book RAMs (`NSYM*NLEVEL` deep) infer block
-  RAM.
+- **Register file:** the two per-side order books (`NSYM` entries of
+  `PRICE_W+QTY_W` bits) are explicit flops plus a read mux, not an inferred
+  RAM, so ASIC and FPGA targets synthesize the same structure and the block
+  stays comparable across tools that map memories differently.
 - **DSP / multipliers:** the imbalance-weighted fair value and the notional
   (`price*qty`) risk check infer hard multipliers.
 - **Deep pipelined control + datapath:** six registered stages of decode,

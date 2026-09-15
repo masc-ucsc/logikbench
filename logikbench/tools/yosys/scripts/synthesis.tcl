@@ -67,8 +67,15 @@ foreach bb_file $sc_blackbox {
     yosys read_verilog -setattr blackbox -sv $bb_file
 }
 
-yosys plugin -i slang
-yosys read_slang --top $sc_topmodule {*}$sc_slang_args -F sc_rtl.f
+# Slang is built into newer Yosys releases (including 0.68+). Older releases
+# expose read_slang only after loading the external plugin. Check the command
+# itself so both installations work without tying this flow to a version
+# string or trying to reload a built-in plugin that has no slang.so.
+set sc_read_slang_help [yosys tee -q -s result.string help read_slang]
+if { [string first "No such command or cell type" $sc_read_slang_help] != -1 } {
+    yosys plugin -i slang
+}
+yosys read_slang --ignore-timing --top $sc_topmodule {*}$sc_slang_args -F sc_rtl.f
 yosys hierarchy -check -top $sc_topmodule
 
 ###############################

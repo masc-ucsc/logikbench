@@ -24,7 +24,8 @@ import logikbench as lb
 from logikbench.runner import FPGA_METRICS, ASIC_METRICS, FPGA_TARGETS
 
 # benchmark groups, in display order
-GROUPS = ['basic', 'memory', 'arithmetic', 'epfl', 'blocks']
+GROUPS = ['basic', 'memory', 'arithmetic', 'epfl', 'blocks',
+          'large', 'iscas85', 'iscas89', 'koios']
 
 # metric set per run mode (fpga vs asic synthesis)
 METRICS_BY_MODE = {"fpga": FPGA_METRICS, "asic": ASIC_METRICS}
@@ -72,8 +73,8 @@ METRIC_INFO = {
                            "recorded by SiliconCompiler."},
     "memory":     {"label": "Peak memory", "dir": "lower",  "unit": "MB",
                    # values are already stored in MB (rescaled at collection)
-                   "desc": "Peak process memory of the synthesis step, as "
-                           "recorded by SiliconCompiler."},
+                   "desc": "Peak process-tree memory during mapper execution. New runs use "
+                           "RSS; historical runs may report unique memory (USS)."},
     "leakagepower": {"label": "Leakage",   "dir": "lower",  "unit": "mW",
                      # SC records leakage power in milliwatts (raw value shown)
                      "desc": "Static leakage power of the synthesized netlist "
@@ -129,7 +130,7 @@ def load_configs(results_dir):
                 continue   # a "*.json" glob can match directories; skip them
             with open(path) as f:
                 data = json.load(f)
-            if _is_payload(data):
+            if _is_payload(data) and data["meta"]["target"] != "lhd":
                 # key by file stem, not the embedded target, so variants of one
                 # target (e.g. z1015 and z1015opt) are kept as
                 # separate columns instead of overwriting each other.
@@ -154,12 +155,33 @@ def load_flat(results_dir):
             continue   # a "*.json" glob can match directories; skip them
         with open(path) as f:
             data = json.load(f)
-        if not _is_payload(data):
+        if not _is_payload(data) or data["meta"]["target"] == "lhd":
             continue
         stem = os.path.splitext(os.path.basename(path))[0]
         mode = "fpga" if data["meta"]["target"] in FPGA_TARGETS else "asic"
         modes[mode][stem] = data
     return {m: c for m, c in modes.items() if c}
+
+
+def refresh_pending(refresh, provenance):
+    """Accept frozen run identity, or the older per-row executable identity."""
+    if refresh.get("run"):
+        if provenance.get("run") != refresh["run"]:
+            return True
+        # Frozen runs carry one executable hash in their run provenance. A
+        # repeated row hash is optional, but may never contradict that hash.
+        return ("binary_sha256" in provenance
+                and provenance["binary_sha256"] != refresh.get("binary_sha256"))
+    return not (refresh.get("binary_sha256")
+                and provenance.get("binary_sha256") == refresh["binary_sha256"])
+
+
+def settings_label(meta):
+    policy = meta.get("synthesis_policy", {})
+    settings = " ".join(f"{key}={str(value).lower() if isinstance(value, bool) else value}"
+                        for key, value in policy.items())
+    options = meta.get("options") or ""
+    return " | ".join(value for value in (settings, options) if value)
 
 
 def build_section(targets, metric_names, collected):
@@ -170,25 +192,49 @@ def build_section(targets, metric_names, collected):
     data = {}
     by_group = {}
     for group, bench in benchmark_order():
+        row_key = f"{group}/{bench}"
         per_target = {}
         for target in targets:
             tm = collected.get(target, {}).get("metrics", {})
-            vals = {m: tm.get(m, {}).get(bench) for m in metric_names}
-            if any(v is not None for v in vals.values()):
+            vals = {m: tm.get(m, {}).get(group, {}).get(bench)
+                    for m in metric_names}
+            if vals.get("memory") is not None and vals["memory"] <= 0:
+                vals["memory"] = None  # old failed USS samples are unavailable
+            status = collected.get(target, {}).get("status", {}).get(group, {}).get(bench)
+            if status:
+                vals["_status"] = status
+            meta = collected.get(target, {}).get("meta", {})
+            refresh = meta.get("refresh", {})
+            if refresh:
+                provenance = meta.get("row_provenance", {}).get(group, {}).get(bench, {})
+                vals["_refresh_pending"] = refresh_pending(refresh, provenance)
+            # Inclusion is decided by MEASURED metrics only. `_status` and
+            # `_refresh_pending` are annotations, and `_refresh_pending` is a
+            # bool that is present for every benchmark as soon as meta carries a
+            # `refresh` block -- so counting them made a target with 48 real
+            # results render as 250 rows of blank cells, which reads as "the run
+            # covered everything and measured nothing".
+            if any(v is not None for k, v in vals.items() if not k.startswith("_")):
                 per_target[target] = vals
         if per_target:
-            data[bench] = per_target
-            by_group.setdefault(group, []).append(bench)
+            data[row_key] = per_target
+            by_group.setdefault(group, []).append(row_key)
 
     return {
         # columns are keyed/labeled by file stem (e.g. z1015,
         # z1015opt); the dashboard header shows the stem directly.
         "targets": targets,
+        "labels": {t: collected[t].get("meta", {}).get("display_label", t)
+                   for t in targets},
+        "target_info": {t: {"tool": collected[t]["meta"]["target"].split("_", 1)[0],
+                            "pdk": collected[t]["meta"]["target"].partition("_")[2]}
+                        for t in targets},
         # synthesis settings each column was produced with (shown under the
         # column name); empty string means defaults.
-        "settings": {t: (collected.get(t, {}).get("meta", {}).get("options")
-                         or "")
+        "settings": {t: settings_label(collected.get(t, {}).get("meta", {}))
                      for t in targets},
+        "refresh": {t: collected.get(t, {}).get("meta", {}).get("refresh", {})
+                    for t in targets},
         "metrics": [{"key": m, **METRIC_INFO[m]} for m in metric_names],
         "groups": [{"name": g, "benchmarks": by_group[g]}
                    for g in GROUPS if g in by_group],

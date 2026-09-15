@@ -77,6 +77,7 @@
   tbody td { font-variant-numeric: tabular-nums; font-weight: 600; padding: 10px 8px; border-bottom: 1px solid rgba(255,255,255,.03); }
   tbody tr:last-child td, tbody tr:last-child th { border-bottom: 0; }
   tbody td.empty { color: #5b6373; font-weight: 400; background: transparent !important; }
+  tbody td.partial { color: var(--txt-dim); background: var(--panel-2); }
   .cell-val { color: #0c0f16; text-shadow: 0 1px 0 rgba(255,255,255,.18); }
   tr.grp th { position: sticky; left: 0; background: #11141c; color: var(--txt-dim);
     text-align: left; padding: 7px 16px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; font-weight: 700;
@@ -119,16 +120,27 @@ function metric(){ return SECTION.metrics.find(m => m.key === metricKey); }
 // all tools on one node. So exactly one selection is active -- a tool (show its
 // columns across every node) or a pdk (show every tool's column for that node).
 function splitCol(t){ const i = t.indexOf("_"); return i < 0 ? [t, ""] : [t.slice(0, i), t.slice(i + 1)]; }
-function toolOf(t){ return splitCol(t)[0]; }
-function pdkOf(t){ return splitCol(t)[1]; }
+function toolOf(t){ return ((SECTION.target_info || {})[t] || {}).tool || splitCol(t)[0]; }
+function pdkOf(t){ return ((SECTION.target_info || {})[t] || {}).pdk || splitCol(t)[1]; }
 const TOOL_LABEL = {};   // button display aliases (none; tokens shown as-is)
 const uniq = a => [...new Set(a)];
 const ALL_TOOLS = uniq(SECTION.targets.map(toolOf));
 const ALL_PDKS = uniq(SECTION.targets.map(pdkOf).filter(Boolean));
 const FACETS = !!document.getElementById("facets");
-// default pivot: the first tool (all nodes for it)
-let pivot = ALL_TOOLS.length ? { dim: "tool", key: ALL_TOOLS[0] }
-                             : { dim: "pdk", key: ALL_PDKS[0] };
+// Default pivot: the PDK with the most measured cells, not a hardcoded node.
+// Hardcoding "asap7" silently hid every freshly published sky130 column behind a
+// filter -- the data was in the page and the table simply never showed it. Pick
+// the node that actually carries the most data so a new run is visible on load.
+function coverageOfPdk(k){
+  let n = 0;
+  for (const row of Object.values(SECTION.data || {}))
+    for (const t of Object.keys(row))
+      if (pdkOf(t) === k) n++;
+  return n;
+}
+let pivot = ALL_PDKS.length
+  ? { dim: "pdk", key: ALL_PDKS.slice().sort((a, b) => coverageOfPdk(b) - coverageOfPdk(a))[0] }
+  : { dim: "tool", key: ALL_TOOLS[0] };
 
 // columns to show: all targets when facets are off, else those matching the
 // active pivot (one tool across all nodes, or one node across all tools).
@@ -166,7 +178,7 @@ function cycleSort(col){
 // Sort value for a benchmark in a column (the bench name, or the column's value
 // for the selected metric); null when missing so it can be ordered last.
 function sortValue(bench, col){
-  if (col === BENCH_COL) return bench;
+  if (col === BENCH_COL) return benchLabel(bench);
   const r = SECTION.data[bench];
   const v = r && r[col] ? r[col][metricKey] : null;
   return (v === null || v === undefined) ? null : v;
@@ -229,7 +241,20 @@ function renderTabs(){
   });
   // explanation of the active metric (e.g. exactly what a "Cell" counts)
   const note = document.getElementById("note");
-  const desc = metric().desc || "";
+  let desc = metric().desc || "";
+  const refreshing = visibleTargets().filter(t => (SECTION.refresh || {})[t]?.total);
+  if (refreshing.length) {
+    desc += " Refresh: " + refreshing.map(t => {
+      const r = SECTION.refresh[t];
+      return `${t} ${r.attempted}/${r.total} attempted`;
+    }).join("; ") + ". Values marked † are from the previous publication; their reruns are pending and they are not color-ranked.";
+  }
+  if (["cells", "cellarea"].includes(metricKey) && visibleTargets().some(t => toolOf(t) === "lhd")) {
+    desc += " Values marked * cover mapped logic only; native state and hard macros are excluded. They are not color-ranked.";
+  }
+  if (metricKey === "logicdepth" && visibleTargets().some(t => toolOf(t) === "lhd")) {
+    desc += " LHD reports maximum combinational structural depth; Yosys reports gate count on the worst-slack timing path. Mixed LHD/Yosys depth rows are not color-ranked.";
+  }
   note.textContent = desc;
   note.style.display = desc ? "" : "none";
 }
@@ -242,21 +267,58 @@ function sortArrow(col){
 
 // one benchmark row (<tr>); colors are per-row across targets, independent of
 // row order, so the same row renders identically grouped or sorted.
+function benchLabel(bench){
+  const i = bench.indexOf("/");
+  return i < 0 ? bench : bench.slice(i + 1);
+}
+
 function renderRow(bench, targets){
   const m = metric();
   const row = SECTION.data[bench] || {};
   const vals = targets.map(t => (row[t] ? row[t][m.key] : null));
-  const present = vals.filter(v => v !== null && v !== undefined);
+  const pending = targets.map(t => !!(row[t] || {})._refresh_pending);
+  const proofs = targets.map(t => ((row[t] || {})._status || {}).lec);
+  const unproven = proofs.map(p => p !== undefined && p !== "proven");
+  const partial = targets.map(t => toolOf(t) === "lhd" &&
+    ((row[t] || {})._status || {}).timing === "skipped" && ["cells", "cellarea"].includes(m.key));
+  const mixedDepth = m.key === "logicdepth" && targets.some(t => toolOf(t) === "lhd") &&
+    targets.some(t => toolOf(t) === "yosys");
+  const present = vals.filter((v, i) => !partial[i] && !pending[i] && !unproven[i] && v !== null && v !== undefined);
   const best = m.dir === "lower" ? Math.min(...present) : Math.max(...present);
   // runner-up: best value among the non-winners (anchors yellow)
   const losers = present.filter(v => v !== best);
   const second = losers.length
     ? (m.dir === "lower" ? Math.min(...losers) : Math.max(...losers))
     : best;
-  let cells = `<th class="bench">${bench}</th>`;
-  vals.forEach(v => {
-    if (v === null || v === undefined){ cells += `<td class="empty">&mdash;</td>`; return; }
-    cells += `<td style="${cellStyle(cellHue(v, best, second, m.dir))}"><span class="cell-val">${fmt(v, m)}</span></td>`;
+  let cells = `<th class="bench">${benchLabel(bench)}</th>`;
+  vals.forEach((v, i) => {
+    if (unproven[i] && v !== null && v !== undefined) {
+      cells += `<td class="partial" title="LEC ${proofs[i]}; provisional measurement, excluded from ranking">${fmt(v, m)}?</td>`;
+      return;
+    }
+    if (pending[i] && v !== null && v !== undefined) {
+      const detail = partial[i] ? "; mapped logic only, excluding native state and hard macros" : "";
+      cells += `<td class="partial" title="Previous publication; rerun with current options pending${detail}">${fmt(v, m)}${partial[i] ? "*" : ""}&dagger;</td>`;
+      return;
+    }
+    if (partial[i] && v !== null && v !== undefined) {
+      cells += `<td class="partial" title="Mapped logic only; native state and hard macros are excluded">${fmt(v, m)}*</td>`;
+      return;
+    }
+    if (v === null || v === undefined){
+      const status = (row[targets[i]] || {})._status || {};
+      const failed = Object.values(status).some(s => s === "error" || s === "timeout");
+      cells += failed ? `<td class="empty" title="This benchmark run failed; see retained build reports">failed</td>`
+                      : `<td class="empty">&mdash;</td>`;
+      return;
+    }
+    if (mixedDepth) {
+      const title = toolOf(targets[i]) === "lhd" ? "Maximum combinational structural depth"
+        : toolOf(targets[i]) === "yosys" ? "Gate count on the worst-slack timing path" : "Tool-specific logic depth";
+      cells += `<td title="${title}">${fmt(v, m)}</td>`;
+      return;
+    }
+    cells += `<td style="${cellStyle(cellHue(v, best, second, m.dir))}"><span class="cell-val" title="${proofs[i] === "proven" ? "LEC proven" : ""}">${fmt(v, m)}</span></td>`;
   });
   const tr = document.createElement("tr"); tr.innerHTML = cells; return tr;
 }

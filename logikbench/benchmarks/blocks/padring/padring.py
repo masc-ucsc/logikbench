@@ -32,6 +32,12 @@ class Padring(Design):
             "NPINS": [4, 8, 16, 32, 64],
         }
 
+    def process_setups(self, target, project):
+        # Sky130's GPIO wrapper consumes cfg[15:0], including the drive mode
+        # in bits 15:13. The technology-independent ring defaults to eight.
+        if target == "sky130":
+            project.design.set_param("CFGW", "16", "rtl")
+
 
 if __name__ == "__main__":
     d = Padring()

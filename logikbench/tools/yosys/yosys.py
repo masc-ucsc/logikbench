@@ -15,6 +15,8 @@ import re
 from siliconcompiler import sc_open
 from siliconcompiler.tools.yosys import YosysTask
 
+from logikbench.tools.resources import ProcessRSS
+
 # directory holding this tool's TCL scripts: scripts/<refdir>/synthesis.tcl
 _TOOLDIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -226,7 +228,7 @@ def classify_cells(by_type, vendor):
     return counts, unclassified
 
 
-class Synthesis(YosysTask):
+class Synthesis(ProcessRSS, YosysTask):
     """Run scripts/<refdir>/synthesis.tcl and record synthesis metrics."""
 
     def __init__(self):

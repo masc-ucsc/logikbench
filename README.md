@@ -113,6 +113,8 @@ lb syn -n mux --target virtex7
 # Run a whole group; metrics go to build/results/<target>.json
 lb syn -g basic --target virtex7
 lb syn -g basic --target asap7          # ASIC synthesis (yosys mapper)
+lb syn -g basic --tool lhd              # LiveHD with its default Liberty
+lb syn -g basic --target asap7 --tool lhd
 
 # Simulate the self-checking testbenches, or lint the RTL
 lb sim -g basic
@@ -133,9 +135,10 @@ each benchmark is a SiliconCompiler `Design`, and `lb` has one subcommand per ta
 
 - `lb syn` synthesizes the selected benchmarks for one or more `--target`s (an
   ASIC PDK stem such as `freepdk45`, or an FPGA part such as `virtex7`)
-  with `--tool` (yosys or, for ASIC, tardigrade). It writes a per-target metrics
-  file `build/results/<target>.json`, incrementally (read-modify-write), so
-  running a subset updates only those benchmarks and preserves the rest.
+  with `--tool` (yosys, tardigrade, or lhd for ASIC). LiveHD can also run
+  without `--target`, using its own default Liberty. It writes a per-target
+  metrics file `build/results/<target>.json`, incrementally (read-modify-write),
+  so running a subset updates only those benchmarks and preserves the rest.
 - `lb pnr` runs place-and-route (the SC asicflow through `route`) on an ASIC
   `--target` PDK; `--from/--to` restrict the flow (e.g. `--to synthesis.timing`
   for synth-stage metrics only).
@@ -185,12 +188,15 @@ architecture config vendored under `logikbench/targets/zeroasic/`.
 
 ### ASIC Targets
 
-ASIC runs take an ASIC PDK stem as `--target`. `lb syn --tool yosys|tardigrade`
-runs the lightweight `lbflow` (synthesis + OpenSTA timing, no place-and-route)
-used for the QoR metrics above; `lb pnr` runs the full SiliconCompiler `asicflow`
-(synth -> floorplan -> place -> cts -> route), trimmed to a single library and a
-single setup corner so each benchmark stays fast. `lb pnr --to synthesis.timing`
-stops the asicflow at synthesis for synth-stage metrics only.
+ASIC runs normally take an ASIC PDK stem as `--target`.
+`lb syn --tool yosys|tardigrade|lhd` runs the lightweight `lbflow`
+(synthesis plus OpenSTA timing, no place-and-route) used for the QoR metrics
+above. With LHD, `--target` may be omitted to use LiveHD's default Liberty;
+that targetless mode reports synthesis metrics without timing. `lb pnr` runs the
+full SiliconCompiler `asicflow` (synth -> floorplan -> place -> cts -> route),
+trimmed to a single library and a single setup corner so each benchmark stays
+fast. `lb pnr --to synthesis.timing` stops the asicflow at synthesis for
+synth-stage metrics only.
 
 | `--target` PDK | Library |
 |----------------|---------|
@@ -200,9 +206,118 @@ stops the asicflow at synthesis for synth-stage metrics only.
 | `gf180` | GlobalFoundries 180 |
 | `ihp130` | IHP SG13G2 130 |
 
-So `lb syn --target freepdk45 --tool tardigrade` runs the tardigrade lbflow, and
-`lb pnr --target asap7` runs the asicflow through route on ASAP7. All of these
-are lambdapdk std-cell PDKs.
+So `lb syn --target freepdk45 --tool tardigrade` runs the tardigrade lbflow,
+`lb syn --target asap7 --tool lhd` runs LiveHD against the ASAP7 libraries,
+and `lb pnr --target asap7` runs the asicflow through route on ASAP7. All named
+targets are lambdapdk std-cell PDKs.
+
+The LHD adapter first looks for the sibling build
+`../livehd/bazel-bin/lhd/lhd`, then falls back to `lhd` on `PATH`. For a named
+PDK, it retains LiveHD's default options and also sends the mapped netlist to the
+same SiliconCompiler OpenSTA task used by the other mappers. Wiring expressions
+are normalized for OpenSTA while preserving mapped cell instances. Native state
+that remains unmapped is retained and reported with unavailable timing. Fmax is
+OpenSTA's reciprocal minimum clock period under the same PDK corners and SDC
+used by Yosys/Tardigrade; there is no placement, routing, or extracted parasitic
+back-annotation. For multiple clocks, SiliconCompiler reports the maximum of
+the per-clock Fmax values.
+Each synthesis timing job uses one OpenSTA thread; `lb -j` controls parallel
+benchmarks. This avoids oversubscription and contention in OpenSTA's shared
+parasitic lookup on large pre-PNR netlists.
+
+Run `bash lhd_run.sh` for all nine benchmark groups on ASAP7 and Sky130; it
+refreshes the dashboard even when individual benchmarks fail. `LB_JOBS` (1)
+and `LB_TIMEOUT` (1800 seconds per step) control scheduling. The targetless LHD
+command remains available for standalone experiments but is excluded from the
+comparison dashboard. To refresh from retained manifests without running tools,
+use `uv run scripts/collect_lhd.py --builddir build --publish`, then the two
+dashboard commands at the end of `lhd_run.sh`.
+
+The script records excursions above a 16 GiB soft memory target and enforces
+a hard aggregate job-tree limit of three quarters of physical RAM, while keeping
+one quarter available for the system. It samples every 0.1 seconds. On macOS the guard counts
+compressed pages using physical footprint, as well as RSS. It kills the command
+tree on either limit, including normalization, depth analysis, and OpenSTA;
+measurements and the termination reason are saved in `build/lhd-memory-guard.json`.
+Other runs can use `uv run python -m logikbench.memory_guard -- COMMAND...`.
+The guard also sets LiveHD's process budget to the hard ceiling. LHD benchmark mapping
+explicitly selects `color.synth_alg=cones`, `color.ctrl_cones=true` and
+`color.forward=all`: overlapping control/select/enable cones cluster separately
+from data cones, including overlap at primary inputs. The soft bound is
+`color.max_gate=30000` predicted AIG gates, with arithmetic boundaries enabled.
+ASAP7 retains mux boundaries and disables ABC area recovery (`area_relax=0`,
+`area_flow=none`) to favor depth; Sky130 puts muxes in data colors and retains
+normal area recovery. Both use one ABC worker. The PDK's default clock (or
+`--clk` override in ns) supplies the ABC target in ps; the shared OpenSTA endpoint
+continues to measure the same PDK SDC. Explicit `--options` settings override
+adapter defaults without creating conflicting duplicate flags.
+It uses `color.min_ge=500` for small-definition absorption and a 16 GiB per-color
+ABC growth budget. Indivisible wide nodes can exceed the
+color target, so the independent memory guard remains necessary.
+
+Yosys must be an optimized build for meaningful runtime comparisons. An empty
+CMake build type leaves it at `-O0`, which can make large structural analyses
+take minutes. `bash scripts/build_yosys.sh ../yosys` builds and installs a
+Release version under `build/tools/yosys`; `lhd_run.sh` uses it automatically
+when present. For direct `lb` commands, prepend `build/tools/yosys/bin` to
+`PATH`. This local build leaves the system installation available.
+
+The ASIC Yosys recipe maps directly to the PDK with `synth -noabc`, then one
+delay-driven ABC pass. FRAIG and DCH use a 500-conflict budget per SAT proof;
+the default drive/load, buffering and sizing stages are retained. Each optional
+sizing stage has a 60-second CPU budget and retains its best mapped network.
+Simulation
+`$print` cells are removed before mapping so they do not reach OpenSTA.
+On Yosys builds supporting `share.sat_effort`, SAT resource sharing is limited
+to ten million effort steps per module.
+
+Logic depth counts the longest combinational path through mapped leaf cells,
+crossing module boundaries and cutting at registers and memories. Liberty
+merges, structural declarations, and cell metadata are cached per target;
+structural analysis reuses the normalized RTLIL rather than parsing a second
+Verilog copy. Fully mapped netlists use a hierarchy-preserving walk of pin
+arrivals, with separate arrivals for each instance and register boundaries.
+Native procedural state uses an analysis copy with state and wiring folding.
+The optional depth reader has a 600-second limit and a 16 GiB memory ceiling
+(reduced on smaller hosts). If it reaches either limit, depth remains unavailable
+and completed synthesis metrics are retained. The reason and observed memory
+are saved in `reports/logicdepth.json` and `reports/logicdepth_memory.json`.
+`reports/adapter_time.json` separates normalization and depth cost.
+Peak memory is sampled process-tree RSS during mapper execution in decimal MB,
+including child tools.
+LHD also records the OS child-process high-water mark so short runs cannot
+fall between samples; the larger measurement is reported.
+Shared resident pages may be counted more than once, while older published
+results may use unique memory (USS). Missing historical memory
+samples display as unavailable rather than zero.
+
+PDK hard-macro declarations select LiveHD's Yosys-Slang reader and remain opaque
+instances through mapping. SRAM cells are counted separately from mapped standard
+cells in the structural report; memory boundaries cut combinational depth paths.
+
+Without hard-macro declarations, the default Slang reader retries through LiveHD's
+Yosys-Slang reader when the frontend reports an unsupported construct before mapping. Original diagnostics,
+both command lines, and the selected reader remain in `reports/reader_*`.
+Explicit `--reader` options, syntax errors, and internal compiler errors do not
+retry. Technology mapping still runs through LiveHD's ABC pass.
+
+Select a reader explicitly with `lb syn --tool lhd --reader slang` or
+`lb syn --tool lhd --reader yosys`. Slang remains the default. The Yosys option
+uses LiveHD's bundled Yosys with built-in SystemVerilog support; it needs no
+separate `yosys-slang` plugin. `yosys-slang` remains an alias, and
+`yosys-verilog` selects the older Verilog frontend. For example:
+
+```bash
+uv run lb syn --tool lhd -t asap7 --reader yosys -g large -n coralnpu blackparrot
+```
+
+For elaboration checks without mapping, add `--lintonly`; LHD retains the compiled
+LGraph in `outputs/lg` and skips Verilog emission and timing analysis. Reader arguments can
+be forwarded with `--options='-- --ignore-assertions --relax-enum-conversions'`;
+the resolved source list, include paths, defines, and parameters are retained.
+
+See [reader coverage and remaining limitations](docs/readers.md) for the
+validated design routes, including the physical pad-ring backend.
 
 ### Options
 
@@ -224,7 +339,7 @@ Per-command flags:
 
 | Command | Flags |
 |---------|-------|
-| `syn` | `-t/--target` (PDK stem or FPGA part, required), `--tool {yosys,tardigrade}`, `--clk` (ns), `--options`, `--lintonly` |
+| `syn` | `-t/--target` (PDK stem or FPGA part; optional only for lhd), `--tool {yosys,tardigrade,lhd}`, `--clk` (ns), `--options`, `--lintonly` |
 | `pnr` | `-t/--target` (ASIC PDK stem, required), `--clk` (ns), `--options`, `--lintonly`, `--from`/`--to` (flow step: `synthesis`, `floorplan`, `place`, `cts`, `route`) |
 | `sim` | `--tool {icarus,verilator}` |
 | `lint` | `--tool {slang,verilator}` |
@@ -238,8 +353,9 @@ and preserves the rest. Use `--publish` to promote them into the committed
 
 ### ASIC Timing Constraints (SDC)
 
-Every ASIC run is timing-constrained automatically. You do not need to write an
-SDC per benchmark: the flow generates a small wrapper that injects `--clk` and
+The PDK-targeted synthesis paths and the place-and-route path are
+timing-constrained automatically. You do not need to write an SDC per benchmark:
+the flow generates a small wrapper that injects `--clk` and
 the per-PDK knobs, then sources the shared default constraints in
 `logikbench/targets/default.sdc`. Applied to every benchmark, it:
 
@@ -411,8 +527,9 @@ derived from an external source:
 FPGA runs report per-benchmark resource counts extracted from the Yosys synthesis run (no place-and-route) — **cells** (the total, defined below), **LUTs**, **muxes**, **LUT RAM**, **DSPs**, **block RAMs**, **registers**, **latches**, and **carry cells** — plus **logic depth** and **runtime**.
 
 ASIC runs report three metrics, **Cell Area**, **FMAX**, and **runtime**. Cell
-Area comes from the Yosys synthesis run; FMAX is computed by an OpenSTA timing
-run on the synthesized netlist. Neither involves place-and-route.
+Area comes from the selected synthesis mapper; FMAX is computed by the same
+OpenSTA timing flow for every PDK-targeted mapper. Neither involves
+place-and-route.
 
 
 ### FPGA resource counts
@@ -485,10 +602,10 @@ other PDKs' memory results are unaffected.
 
 ### ASIC FMAX
 
-FMAX is the maximum operating frequency, computed by an OpenSTA timing run on the
-synthesized netlist (`logikbench/tools/opensta/scripts/timing.tcl`). For each
-clock STA finds the minimum achievable period (`find_clk_min_period`), and FMAX
-is `1 / min_period`, reported in MHz.
+FMAX is the maximum operating frequency, computed by SiliconCompiler's OpenSTA
+timing task on the synthesized netlist. For each clock STA finds the minimum
+achievable period (`find_clk_min_period`), and FMAX is `1 / min_period`, reported
+in MHz. This is the same timing flow for Yosys, tardigrade, and LHD.
 
 The benchmarks ship no constraints, so a generic SDC (generated by
 `logikbench/sdc.py`) attaches a clock to a port named `clk` when present, or a

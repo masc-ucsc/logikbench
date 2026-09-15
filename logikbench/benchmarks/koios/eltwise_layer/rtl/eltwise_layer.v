@@ -366,10 +366,10 @@ module eltwise_layer(
       end
     
       6: begin
-      bram_addr_b_0_ext = bram_addr_ext;
-      bram_wdata_b_0_ext = bram_wdata_ext;
-      bram_we_b_0_ext = bram_we_ext;
-      bram_rdata_ext = bram_rdata_b_0_ext;
+      bram_addr_b_0_ext <= bram_addr_ext;
+      bram_wdata_b_0_ext <= bram_wdata_ext;
+      bram_we_b_0_ext <= bram_we_ext;
+      bram_rdata_ext <= bram_rdata_b_0_ext;
       end
     
       7: begin
@@ -3053,5 +3053,4 @@ module FPAddSub_ExceptionModule(
 endmodule
 
 `endif
-
 

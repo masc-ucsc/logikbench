@@ -2,7 +2,13 @@
 # Custom Synthesis Logic
 ###############################
 
-yosys synth -flatten -top $sc_topmodule
+# Map once, against the requested PDK. The generic synth ABC pass duplicates
+# the expensive SAT sweep and its generic gates are immediately mapped again.
+yosys delete {t:$print}
+# Bound total SAT sharing effort per module (supported by current Yosys).
+# The billion-step default spent over five minutes in AXI/Coral sharing alone.
+yosys scratchpad -set share.sat_effort 10000000
+yosys synth -noabc -flatten -top $sc_topmodule
 
 # sc_liberty is a list of liberty files (one for most PDKs, several when the
 # library is split by cell group, e.g. asap7). dfflibmap/abc take a -liberty
@@ -58,7 +64,19 @@ yosys dfflibmap {*}$dff_dont_use {*}$lib_args
 
 # -D 1: push abc to minimize delay as hard as the library allows (an aggressive
 # target well below any achievable period, so mapping is fully delay-driven).
-yosys abc -D 1 {*}$abc_constr_args {*}$abc_dont_use {*}$lib_args
+# Keep the standard delay/drive/load flow, but bound SAT conflicts per proof.
+# Viterbi can spend many minutes on a single unbounded FRAIG equivalence query.
+set abc_script {strash; &get -n; &fraig -x -C 500; &put; scorr; dc2; dretime; retime -o -D 1; strash; &get -n; &dch -f -C 500; &nf -D 1; &put}
+if { [llength $abc_constr_args] } {
+    # Retain the best mapped network when optional sizing becomes expensive.
+    # In particular, deep EPFL circuits can spend many minutes in dnsize.
+    append abc_script {; buffer; upsize -D 1 -T 60; dnsize -D 1 -T 60; stime -p}
+}
+set abc_script_file "abc.mapping.script"
+set fh [open $abc_script_file w]
+puts $fh $abc_script
+close $fh
+yosys abc -script $abc_script_file -D 1 {*}$abc_constr_args {*}$abc_dont_use {*}$lib_args
 
 yosys setundef -zero
 yosys opt_clean -purge

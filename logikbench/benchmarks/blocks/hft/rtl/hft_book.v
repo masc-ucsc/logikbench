@@ -4,12 +4,15 @@
 // License:  MIT (see LICENSE file in LogikBench repository)
 //#############################################################################
 //
-// hft_book: level-indexed limit-order book. Per side (bid/ask) a simple
-// dual-port RAM stores {price,qty} indexed by {symbol,level}; the RAMs infer
-// BRAM. On each update/delete the addressed level is written, and the top of
-// book (level 0) for that symbol is read out. A write to level 0 is forwarded
-// so the emitted top of book reflects the current update. Output aligns one
-// cycle after the input (the RAM read latency).
+// hft_book: limit-order book. Per side (bid/ask) one {price,qty} register
+// per symbol holds level 0, the only level the block ever reads back. The
+// registers are explicit flops (one generated bank per symbol) read through
+// a mux over their concatenated bus, so the book maps to a plain register
+// file on every target instead of inferring a RAM. An update/delete
+// addressing level 0 writes the addressed symbol; deeper levels are decoded
+// and dropped. A write to level 0 is forwarded so the emitted top of book
+// reflects the current update. Output aligns one cycle after the input (the
+// registered read).
 //
 //#############################################################################
 module hft_book #(parameter NSYM = 32,
@@ -37,29 +40,59 @@ module hft_book #(parameter NSYM = 32,
 
    localparam SYMW  = $clog2(NSYM);
    localparam LVLW  = $clog2(NLEVEL);
-   localparam DEPTH = NSYM * NLEVEL;
    localparam PW    = PRICE_W + QTY_W;
    localparam MSG_UPDATE = 8'd1;
    localparam MSG_DELETE = 8'd2;
 
-   reg [PW-1:0]	bid_mem [0:DEPTH-1];
-   reg [PW-1:0]	ask_mem [0:DEPTH-1];
-   reg [PW-1:0]	bid_rd, ask_rd;
+   genvar	i;
 
    wire		wr    = p_valid & ((p_type==MSG_UPDATE)|(p_type==MSG_DELETE));
    wire [PW-1:0] wdata = (p_type==MSG_DELETE) ? {PW{1'b0}} : {p_price, p_qty};
-   wire [SYMW+LVLW-1:0]	waddr = {p_sym, p_level};
-   wire [SYMW+LVLW-1:0]	raddr = {p_sym, {LVLW{1'b0}}};
+   wire		lvl0  = (p_level == {LVLW{1'b0}});
+   wire		wrbid = wr & lvl0 & ~p_side;
+   wire		wrask = wr & lvl0 &  p_side;
 
-   // synchronous write + level-0 read (BRAM inference)
-   always @(posedge clk) begin
-      if (wr & ~p_side) bid_mem[waddr] <= wdata;
-      if (wr &  p_side) ask_mem[waddr] <= wdata;
-      bid_rd <= bid_mem[raddr];
-      ask_rd <= ask_mem[raddr];
-   end
+   // every symbol's register concatenated into one bus (a bus, not an
+   // array, so the read select below cannot infer a RAM)
+   wire [NSYM*PW-1:0] bid_flat;
+   wire [NSYM*PW-1:0] ask_flat;
 
-   // delayed control aligned to the RAM read, plus level-0 write forwarding
+   reg [PW-1:0]	bid_rd, ask_rd;
+
+   // one register bank per symbol: the level-0 {price,qty} of each side
+   generate
+      for (i=0; i<NSYM; i=i+1) begin : book
+	 localparam [SYMW-1:0] ID = i;
+	 wire		 hit = (p_sym == ID);
+	 reg [PW-1:0]	 bid_q, ask_q;
+	 always @(posedge clk or negedge nreset)
+	   if (!nreset) begin
+	      bid_q <= {PW{1'b0}};
+	      ask_q <= {PW{1'b0}};
+	   end
+	   else begin
+	      if (wrbid & hit) bid_q <= wdata;
+	      if (wrask & hit) ask_q <= wdata;
+	   end
+	 assign bid_flat[i*PW +: PW] = bid_q;
+	 assign ask_flat[i*PW +: PW] = ask_q;
+      end
+   endgenerate
+
+   // registered read of the addressed top of book: one mux over the
+   // register bus, one cycle of latency
+   always @(posedge clk or negedge nreset)
+     if (!nreset) begin
+	bid_rd <= {PW{1'b0}};
+	ask_rd <= {PW{1'b0}};
+     end
+     else begin
+	bid_rd <= bid_flat[p_sym*PW +: PW];
+	ask_rd <= ask_flat[p_sym*PW +: PW];
+     end
+
+   // delayed control aligned to the registered read, plus level-0
+   // write forwarding
    reg            d_valid, d_wbid0, d_wask0;
    reg [SYMW-1:0] d_sym;
    reg [PW-1:0]	  d_wdata;

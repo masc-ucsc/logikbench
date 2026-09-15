@@ -11,7 +11,7 @@ implementations live in sibling modules and are kept apart by run mode:
 
 Targets (--target) are named '<tool>_<part>' and select what runs:
   * an FPGA part (e.g. 'virtex7') -> logikbench.fpga;
-  * 'yosys_<pdk>' / 'tardigrade_<pdk>' (e.g. 'yosys_freepdk45') ->
+  * 'yosys_<pdk>' / 'tardigrade_<pdk>' / 'lhd_<pdk>' ->
     logikbench.asic lbflow path (mapper chosen by the tool prefix);
   * 'sc_<pdk>' (e.g. 'sc_asap7') -> logikbench.asic SC asicflow path (a
     target built into SiliconCompiler).
@@ -37,6 +37,7 @@ from logikbench.fpga import FPGA_TARGETS
 __all__ = [
     "FPGA_METRICS", "ASIC_METRICS", "STEPS",
     "FPGA_TARGETS", "SC_TARGETS", "YOSYS_TARGETS", "TARDIGRADE_TARGETS",
+    "LHD_TARGETS",
     "STA_TARGETS", "TARGETS",
     "run_one", "run_task", "read_metrics", "read_asic_metrics",
     "read_tool_var", "read_flow_tools", "read_metric_units",
@@ -65,12 +66,13 @@ def variant_combos(design):
 SC_TARGETS = list(asic.SC_TARGETS)
 YOSYS_TARGETS = list(asic.YOSYS_TARGETS)
 TARDIGRADE_TARGETS = list(asic.TARDIGRADE_TARGETS)
+LHD_TARGETS = list(asic.LHD_TARGETS)
 STA_TARGETS = list(asic.STA_TARGETS)  # 'sta_<pdk>' -> OpenSTA on cached netlist
 
 # all valid --target values, all '<tool>_<part>': FPGA '<vendor>_<part>', then
 # the ASIC sets (sc asicflow, yosys lbflow, tardigrade lbflow, sta).
 TARGETS = (list(fpga.FPGA_TARGETS) + SC_TARGETS + YOSYS_TARGETS
-           + TARDIGRADE_TARGETS + STA_TARGETS)
+           + TARDIGRADE_TARGETS + LHD_TARGETS + ["lhd"] + STA_TARGETS)
 
 
 def run_one(design_cls, target=None, group="", options="", builddir="build",
@@ -126,7 +128,14 @@ def run_one(design_cls, target=None, group="", options="", builddir="build",
             asic._run_sta(design, target, group, cache_root, builddir, quiet,
                           start, stop, timeout, clk, lintonly=lintonly)
             metrics = read_metrics(name, ASIC_METRICS, builddir)
-        elif target in asic.YOSYS_TARGETS or target in asic.TARDIGRADE_TARGETS:
+        elif target == "lhd":
+            asic._run_lhd_default(design, options, builddir, quiet, start,
+                                  stop, timeout, lintonly=lintonly)
+            metrics = {} if lintonly else read_metrics(name, ASIC_METRICS,
+                                                       builddir)
+        elif (target in asic.YOSYS_TARGETS
+              or target in asic.TARDIGRADE_TARGETS
+              or target in asic.LHD_TARGETS):
             asic._run_lbflow(design, target, options, builddir, quiet, start,
                              stop, timeout, clk, lintonly=lintonly)
             metrics = {} if lintonly else read_metrics(name, ASIC_METRICS,

@@ -4,6 +4,7 @@ import argparse
 import glob
 import math
 import os
+import shlex
 import sys
 import json
 import threading
@@ -72,7 +73,7 @@ def present_value(metric, value):
     """Turn a raw SC metric value into the human-readable form stored in the
     results JSON: apply METRIC_DISPLAY scaling (e.g. fmax Hz->MHz), then round
     it (see round_metric)."""
-    if value is None:
+    if value is None or (metric == "memory" and value <= 0):
         return None
     scale = METRIC_DISPLAY.get(metric)
     if scale is not None:
@@ -83,7 +84,7 @@ def present_value(metric, value):
 # `lb syn --target`: PDK stems (ASIC lbflow) + FPGA parts. --tool picks the ASIC
 # mapper; the runner token is '<tool>_<pdk>' (FPGA parts run as-is, yosys only).
 _SYN_PDKS = sorted({t.split('_', 1)[1] for t in YOSYS_TARGETS})
-_SYN_TOOL_PREFIX = {'yosys': 'yosys', 'tardigrade': 'tardigrade'}
+_SYN_TOOL_PREFIX = {'yosys': 'yosys', 'tardigrade': 'tardigrade', 'lhd': 'lhd'}
 
 
 class LbHelpFormatter(argparse.HelpFormatter):
@@ -267,6 +268,8 @@ def _load_estimates(targets):
                     continue
                 for name, val in names.items():
                     if isinstance(val, (int, float)):
+                        if not math.isfinite(val) or (metric == "memory" and val <= 0):
+                            continue  # failed historical samples are unknown footprints
                         store[(target, group, name)] = val
                         peers[(group, name)].append(val)
 
@@ -461,6 +464,11 @@ def run_sweep(args, targets, worklist, netlist_cache=False,
     stop = getattr(args, "stop", None)
     lintonly = getattr(args, "lintonly", False)  # syn has it; pnr does not
     options = getattr(args, "options", "")       # syn has it; pnr does not
+    if getattr(args, "reader", None):
+        extra = shlex.split(options)
+        separator = extra.index("--") if "--" in extra else len(extra)
+        extra[separator:separator] = ["--reader", args.reader]
+        options = shlex.join(extra)
     failures = []
     total = len(tasks)
     done = 0  # completed-job counter; printed as [done/total] progress
@@ -594,7 +602,9 @@ def gather_target_metrics(target, args, worklist):
             metrics_out[metric].setdefault(group, {})[name] = value
         # options are uniform across a target's sweep; read once from a built one
         if options is None:
-            options = read_tool_var(name, "yosys", "synthesis", "options",
+            tool = ("yosys" if target in FPGA_TARGETS
+                    else target.split("_", 1)[0])
+            options = read_tool_var(name, tool, "synthesis", "options",
                                     builddir=gdir)
 
     collected = set()
@@ -654,7 +664,11 @@ def _merge_metrics_into(src_path, dst_path):
         dstm = metrics.setdefault(metric, {})
         for grp, names in groups.items():
             dstm.setdefault(grp, {}).update(names)
-    payload = {"meta": src.get("meta", dst.get("meta", {})), "metrics": metrics}
+    statuses = dst.get("status", {})
+    for group, names in src.get("status", {}).items():
+        statuses.setdefault(group, {}).update(names)
+    payload = {"meta": src.get("meta", dst.get("meta", {})), "metrics": metrics,
+               "status": statuses}
     with open(dst_path, "w") as f:
         json.dump(payload, f, indent=2, sort_keys=True)
 
@@ -721,7 +735,22 @@ def save_target(target, args, worklist):
     if units:
         meta["units"] = units
 
-    payload = {"meta": meta, "metrics": metrics}
+    statuses = payload.get("status", {})
+    for group, _, name in worklist:
+        manifest = os.path.join(tbd, group, name, "job0", f"{name}.pkg.json")
+        if not os.path.isfile(manifest):
+            continue
+        try:
+            with open(manifest) as stream:
+                nodes = json.load(stream).get("record", {}).get("status", {}).get("node", {})
+        except (OSError, ValueError):
+            # A live collection can overlap SiliconCompiler rewriting its
+            # manifest. Retain the previous status until the next collection.
+            continue
+        statuses.setdefault(group, {})[name] = {
+            step: records.get("0", {}).get("value") for step, records in nodes.items()
+            if step != "default"}
+    payload = {"meta": meta, "metrics": metrics, "status": statuses}
     with open(output, "w") as f:
         json.dump(payload, f, indent=2, sort_keys=True)
     print(f"Collected {collected}/{len(worklist)} benchmark(s) -> {output}")
@@ -897,9 +926,16 @@ def run_rtl_task(args):
 def resolve_syn_tokens(args):
     """Map `lb syn --target <t> [--tool]` to the runner's '<tool>_<part>' tokens.
     FPGA parts run yosys synth_fpga (tool must be yosys); PDK stems run the ASIC
-    lbflow with the chosen mapper (yosys|tardigrade). Exits on an invalid combo.
+    lbflow with the chosen mapper. With no target, lhd runs its self-contained
+    synthesis flow and resolves its own default Liberty.
     """
+    if getattr(args, "reader", None) and args.tool != "lhd":
+        sys.exit("error: --reader selects a LiveHD frontend; use --tool lhd")
     fpga_parts = list(FPGA_TARGETS)
+    if not args.target:
+        if args.tool == "lhd":
+            return ["lhd"]
+        sys.exit("error: --target is required unless --tool lhd is selected")
     tokens = []
     for t in args.target:
         if t in fpga_parts:
@@ -1033,15 +1069,17 @@ LogikBench commandline runner.
     # ---- syn: synthesize benchmarks (target task) ----
     syn_p = sub.add_parser("syn", help="Synthesize benchmarks",
                            formatter_class=LbHelpFormatter)
-    syn_p.add_argument('-t', '--target', nargs='+', required=True,
+    syn_p.add_argument('-t', '--target', nargs='+', default=None,
                        metavar="TARGET",
                        help=f"PDK stem for ASIC ({_SYN_PDKS}) or an FPGA part "
-                            "(e.g. virtex7). Sweeps several in turn.")
+                            "(e.g. virtex7). Required except for --tool lhd, "
+                            "which can use LiveHD's default Liberty.")
     add_selection_args(syn_p)
     syn_p.add_argument('--tool', default="yosys",
-                       choices=["yosys", "tardigrade"],
-                       help="ASIC synthesis mapper (default: yosys; FPGA parts "
-                            "always use yosys)")
+                       choices=["yosys", "tardigrade", "lhd"],
+                       help="ASIC synthesis mapper (default: yosys; lhd also "
+                            "supports a targetless self-contained run; FPGA "
+                            "parts always use yosys)")
     syn_p.add_argument('--clk', type=float, default=None, metavar="PERIOD",
                        help="ASIC clock period in ns (FPGA ignores it; default: "
                             "each PDK's tech.tcl clock)")
@@ -1060,6 +1098,9 @@ LogikBench commandline runner.
     syn_p.add_argument('--options', default="", metavar="OPTS",
                        help="Extra options passed verbatim to the mapper (use "
                             "the =form so leading dashes parse: --options=-abc9)")
+    syn_p.add_argument('--reader', choices=['slang', 'yosys', 'yosys-slang', 'yosys-verilog'],
+                       help="LiveHD frontend (default: slang; yosys uses built-in "
+                            "SystemVerilog support). Explicit selection disables retries.")
     syn_p.add_argument('--label', default=None, metavar="LABEL", type=run_label,
                        help="Name this run variant (letters/digits). Isolates "
                             "its build tree (build/<target>_<label>) and result "

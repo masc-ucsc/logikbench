@@ -25,11 +25,13 @@ import os
 
 from siliconcompiler import Task
 
+from logikbench.tools.resources import ProcessRSS
+
 # directory holding this tool's assets (none yet, for future)
 _TOOLDIR = os.path.dirname(os.path.abspath(__file__))
 
 
-class TardigradeTask(Task):
+class TardigradeTask(ProcessRSS, Task):
     """Tool-level definition for the tardigrade binary.
 
     Declares the executable, version switch, and log scraping shared by every

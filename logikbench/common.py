@@ -13,6 +13,7 @@ import shutil
 
 from siliconcompiler import Project
 from siliconcompiler.schema import EditableSchema
+from logikbench.tools.resources import retained_peak_rss
 
 # SC-standard metric names tracked per run mode.
 FPGA_METRICS = ["cells", "luts", "muxes", "lutram", "dsps", "brams",
@@ -142,8 +143,11 @@ def read_metrics(name, metrics=ASIC_METRICS, builddir="build", jobname="job0"):
     manifest = os.path.join(builddir, name, jobname, f"{name}.pkg.json")
     if not os.path.isfile(manifest):
         return None
-    with open(manifest) as f:
-        data = json.load(f)
+    try:
+        with open(manifest) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return None  # a live run may be rewriting the manifest
     out = {}
     for metric in metrics:
         out[metric] = None
@@ -153,12 +157,30 @@ def read_metrics(name, metrics=ASIC_METRICS, builddir="build", jobname="job0"):
             for rec in nodes.get("synthesis", {}).values():
                 if rec.get("value") is not None:
                     out[metric] = rec.get("value")
+            if metric == "memory":
+                observed = retained_peak_rss(os.path.join(
+                    builddir, name, jobname, "synthesis", "0", "reports"))
+                if observed is not None:
+                    out[metric] = max(out[metric] or 0, observed)
             continue
         for idxs in nodes.values():
             for rec in idxs.values():
                 val = rec.get("value")
                 if val is not None:
                     out[metric] = val
+    # A retained LHD netlist can be reanalyzed without rerunning synthesis.
+    # Its structural report is also authoritative if an active timing worker
+    # loaded an older synthesis manifest before that analysis completed.
+    structural = os.path.join(builddir, name, jobname, "synthesis", "0", "reports", "logicdepth.json")
+    try:
+        with open(structural) as stream:
+            report = json.load(stream)
+        if report.get("kind") == "mapped-combinational-cell-depth":
+            for metric, key in (("logicdepth", "logicdepth"), ("cells", "mapped_cells")):
+                if metric in out and report.get(key) is not None:
+                    out[metric] = report[key]
+    except (OSError, ValueError):
+        pass
     return out
 
 
@@ -317,7 +339,7 @@ def read_flow_tools(name, builddir="build", jobname="job0"):
 
 
 def is_complete(name, builddir="build", jobname="job0"):
-    """True if a prior run finished with every node in 'success' status."""
+    """True if work succeeded and every remaining node succeeded or was skipped."""
     manifest = os.path.join(builddir, name, jobname, f"{name}.pkg.json")
     if not os.path.isfile(manifest):
         return False
@@ -327,7 +349,7 @@ def is_complete(name, builddir="build", jobname="job0"):
     statuses = [rec.get("value")
                 for idxs in nodes.values() for rec in idxs.values()
                 if rec.get("value") is not None]
-    return bool(statuses) and all(s == "success" for s in statuses)
+    return "success" in statuses and all(s in ("success", "skipped") for s in statuses)
 
 
 def clean_build(name, builddir="build", jobname="job0"):
