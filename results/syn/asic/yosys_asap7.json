@@ -1,13 +1,13 @@
 {
   "meta": {
-    "logikbench": "0.1.1.dev372+g6bef846eb.d20260710",
+    "logikbench": "0.1.dev857+g891ced851",
     "options": "",
     "schema_version": 1,
-    "siliconcompiler": "0.38.0",
+    "siliconcompiler": "0.38.7",
     "target": "yosys_asap7",
     "tools": {
       "opensta": "3.1.0",
-      "yosys": "0.63"
+      "yosys": "0.68+182"
     },
     "units": {
       "cellarea": "um^2",
@@ -105,20 +105,20 @@
         "bnor": 2.04,
         "bor": 2.04,
         "bxnor": 10.89,
-        "bxor": 10.85,
-        "crossbar": 2607.75,
+        "bxor": 10.91,
+        "crossbar": 2772.3,
         "dffasync": 27.99,
         "dffsync": 27.67,
-        "fsm": 66.72,
+        "fsm": 66.44,
         "gray2bin": 10.75,
-        "icg": 21.61,
-        "latch": 0.0,
-        "mux": 158.66,
-        "muxcase": 70.61,
-        "muxhot": 88.84,
-        "muxpri": 114.53,
-        "onehot": 9.39,
-        "pipeline": 550.77,
+        "icg": 21.83,
+        "latch": 14.0,
+        "mux": 164.87,
+        "muxcase": 43.55,
+        "muxhot": 89.67,
+        "muxpri": 114.21,
+        "onehot": 9.32,
+        "pipeline": 551.31,
         "shiftreg": 35.43,
         "tff": 40.04,
         "tmr": 8.4
@@ -345,17 +345,17 @@
         "bor": 19,
         "bxnor": 63,
         "bxor": 63,
-        "crossbar": 21392,
+        "crossbar": 22416,
         "dffasync": 128,
         "dffsync": 199,
-        "fsm": 405,
+        "fsm": 397,
         "gray2bin": 63,
         "icg": 130,
         "latch": 64,
-        "mux": 1558,
-        "muxcase": 743,
-        "muxhot": 702,
-        "muxpri": 1139,
+        "mux": 1706,
+        "muxcase": 326,
+        "muxhot": 689,
+        "muxpri": 1123,
         "onehot": 99,
         "pipeline": 3535,
         "shiftreg": 270,
@@ -574,31 +574,31 @@
         "tanh": 2283.26
       },
       "basic": {
-        "arbiter": 4464.53,
+        "arbiter": 4417.58,
         "band": 6741.96,
         "bin2gray": 10358.22,
-        "bin2prio": 1147.18,
+        "bin2prio": 1143.73,
         "binv": 24969.66,
         "bnand": 7757.75,
         "bnor": 6580.92,
         "bor": 6398.67,
-        "bxnor": 5679.45,
-        "bxor": 5686.39,
-        "crossbar": 3422.34,
-        "dffasync": 11665.43,
-        "dffsync": 11044.62,
-        "fsm": 1228.13,
+        "bxnor": 5684.9,
+        "bxor": 5679.39,
+        "crossbar": 3478.27,
+        "dffasync": 10021.48,
+        "dffsync": 9845.55,
+        "fsm": 1161.33,
         "gray2bin": 440.48,
-        "icg": 12203.6,
+        "icg": 10786.15,
         "latch": null,
-        "mux": 4742.77,
-        "muxcase": 4001.21,
-        "muxhot": 5554.37,
-        "muxpri": 2935.8,
-        "onehot": 7903.69,
-        "pipeline": 4622.29,
-        "shiftreg": 7080.77,
-        "tff": 8114.45,
+        "mux": 4330.47,
+        "muxcase": 4839.88,
+        "muxhot": 5744.76,
+        "muxpri": 2729.42,
+        "onehot": 7894.07,
+        "pipeline": 4334.9,
+        "shiftreg": 6546.07,
+        "tff": 7104.58,
         "tmr": 16702.24
       },
       "blocks": {
@@ -821,23 +821,23 @@
         "bnand": 0.000121,
         "bnor": 0.000117,
         "bor": 0.000126,
-        "bxnor": 0.000719,
-        "bxor": 0.000719,
-        "crossbar": 0.0878,
-        "dffasync": 0.00144,
-        "dffsync": 0.00204,
-        "fsm": 0.00171,
+        "bxnor": 0.000718,
+        "bxor": 0.000708,
+        "crossbar": 0.0993,
+        "dffasync": 0.000436,
+        "dffsync": 0.000756,
+        "fsm": 0.000567,
         "gray2bin": 0.00073,
-        "icg": 0.00168,
-        "latch": 0.0,
-        "mux": 0.0108,
-        "muxcase": 0.00369,
-        "muxhot": 0.00372,
-        "muxpri": 0.00354,
-        "onehot": 0.00103,
-        "pipeline": 0.0375,
-        "shiftreg": 0.00277,
-        "tff": 0.0023,
+        "icg": 0.00033,
+        "latch": 8.9e-05,
+        "mux": 0.00682,
+        "muxcase": 0.00543,
+        "muxhot": 0.00494,
+        "muxpri": 0.0036,
+        "onehot": 0.000996,
+        "pipeline": 0.0178,
+        "shiftreg": 0.00153,
+        "tff": 0.00129,
         "tmr": 0.000614
       },
       "blocks": {
@@ -1062,17 +1062,17 @@
         "bor": 4,
         "bxnor": 6,
         "bxor": 6,
-        "crossbar": 10,
+        "crossbar": 11,
         "dffasync": 2,
         "dffsync": 2,
-        "fsm": 22,
+        "fsm": 21,
         "gray2bin": 63,
-        "icg": 3,
+        "icg": 1,
         "latch": 0,
         "mux": 7,
-        "muxcase": 8,
+        "muxcase": 5,
         "muxhot": 5,
-        "muxpri": 10,
+        "muxpri": 11,
         "onehot": 3,
         "pipeline": 6,
         "shiftreg": 3,
@@ -1291,32 +1291,32 @@
         "tanh": 373.2
       },
       "basic": {
-        "arbiter": 371.1,
-        "band": 365.6,
-        "bin2gray": 370.7,
-        "bin2prio": 371.6,
-        "binv": 385.9,
-        "bnand": 371.3,
-        "bnor": 392.3,
-        "bor": 370.7,
-        "bxnor": 370.7,
-        "bxor": 370.8,
-        "crossbar": 468.3,
-        "dffasync": 371.0,
-        "dffsync": 371.3,
-        "fsm": 389.9,
-        "gray2bin": 370.9,
-        "icg": 371.4,
-        "latch": 371.0,
-        "mux": 396.8,
-        "muxcase": 390.4,
-        "muxhot": 393.1,
-        "muxpri": 393.2,
-        "onehot": 386.5,
-        "pipeline": 396.2,
-        "shiftreg": 370.9,
-        "tff": 371.3,
-        "tmr": 371.1
+        "arbiter": 333.8,
+        "band": 332.4,
+        "bin2gray": 332.3,
+        "bin2prio": 322.9,
+        "binv": 340.8,
+        "bnand": 332.1,
+        "bnor": 332.5,
+        "bor": 332.3,
+        "bxnor": 332.1,
+        "bxor": 332.2,
+        "crossbar": 506.8,
+        "dffasync": 333.0,
+        "dffsync": 333.1,
+        "fsm": 372.0,
+        "gray2bin": 333.2,
+        "icg": 334.0,
+        "latch": 333.8,
+        "mux": 501.5,
+        "muxcase": 371.5,
+        "muxhot": 377.0,
+        "muxpri": 373.9,
+        "onehot": 334.6,
+        "pipeline": 377.5,
+        "shiftreg": 366.0,
+        "tff": 333.3,
+        "tmr": 333.2
       },
       "blocks": {
         "apbregs": 402.5,
@@ -1530,29 +1530,29 @@
         "tanh": -3.051
       },
       "basic": {
-        "arbiter": -0.106,
+        "arbiter": -0.1203,
         "band": 0.0,
         "bin2gray": 0.0,
-        "bin2prio": -19.56,
+        "bin2prio": -19.7,
         "binv": 0.0,
         "bnand": 0.0,
         "bnor": 0.0,
         "bor": 0.0,
         "bxnor": 0.0,
         "bxor": 0.0,
-        "crossbar": -93.11,
+        "crossbar": -88.27,
         "dffasync": 0.0,
         "dffsync": 0.0,
-        "fsm": -26.12,
+        "fsm": -28.31,
         "gray2bin": -61.77,
         "icg": 0.0,
         "latch": 0.0,
-        "mux": -0.5854,
-        "muxcase": -2.992,
+        "mux": -1.659,
+        "muxcase": -0.3456,
         "muxhot": 0.0,
-        "muxpri": -8.916,
+        "muxpri": -10.6,
         "onehot": 0.0,
-        "pipeline": -8.745,
+        "pipeline": -18.22,
         "shiftreg": 0.0,
         "tff": 0.0,
         "tmr": 0.0
@@ -1769,32 +1769,32 @@
         "tanh": 3.37
       },
       "basic": {
-        "arbiter": 2.64,
-        "band": 2.69,
-        "bin2gray": 2.44,
-        "bin2prio": 2.75,
-        "binv": 2.28,
-        "bnand": 2.48,
-        "bnor": 2.82,
-        "bor": 2.57,
-        "bxnor": 2.7,
-        "bxor": 2.63,
-        "crossbar": 44.35,
-        "dffasync": 2.39,
-        "dffsync": 2.69,
-        "fsm": 2.75,
-        "gray2bin": 2.47,
-        "icg": 2.53,
-        "latch": 2.46,
-        "mux": 7.49,
-        "muxcase": 3.71,
-        "muxhot": 4.46,
-        "muxpri": 4.52,
-        "onehot": 2.94,
-        "pipeline": 6.94,
-        "shiftreg": 2.88,
-        "tff": 2.65,
-        "tmr": 2.52
+        "arbiter": 2.08,
+        "band": 2.08,
+        "bin2gray": 2.09,
+        "bin2prio": 2.39,
+        "binv": 1.96,
+        "bnand": 2.08,
+        "bnor": 2.09,
+        "bor": 2.09,
+        "bxnor": 2.17,
+        "bxor": 2.18,
+        "crossbar": 34.59,
+        "dffasync": 2.08,
+        "dffsync": 2.07,
+        "fsm": 3.04,
+        "gray2bin": 2.08,
+        "icg": 2.08,
+        "latch": 1.98,
+        "mux": 5.74,
+        "muxcase": 3.49,
+        "muxhot": 5.3,
+        "muxpri": 5.54,
+        "onehot": 2.29,
+        "pipeline": 8.2,
+        "shiftreg": 2.49,
+        "tff": 2.09,
+        "tmr": 2.07
       },
       "blocks": {
         "apbregs": 6.74,
@@ -1931,6 +1931,114 @@
         "ramtdpdc": 2.63,
         "regfile": 25.62,
         "rom": 4.46
+      }
+    }
+  },
+  "status": {
+    "basic": {
+      "arbiter": {
+        "synthesis": "success",
+        "timing": "success"
+      },
+      "band": {
+        "synthesis": "success",
+        "timing": "success"
+      },
+      "bin2gray": {
+        "synthesis": "success",
+        "timing": "success"
+      },
+      "bin2prio": {
+        "synthesis": "success",
+        "timing": "success"
+      },
+      "binv": {
+        "synthesis": "success",
+        "timing": "success"
+      },
+      "bnand": {
+        "synthesis": "success",
+        "timing": "success"
+      },
+      "bnor": {
+        "synthesis": "success",
+        "timing": "success"
+      },
+      "bor": {
+        "synthesis": "success",
+        "timing": "success"
+      },
+      "bxnor": {
+        "synthesis": "success",
+        "timing": "success"
+      },
+      "bxor": {
+        "synthesis": "success",
+        "timing": "success"
+      },
+      "crossbar": {
+        "synthesis": "success",
+        "timing": "success"
+      },
+      "dffasync": {
+        "synthesis": "success",
+        "timing": "success"
+      },
+      "dffsync": {
+        "synthesis": "success",
+        "timing": "success"
+      },
+      "fsm": {
+        "synthesis": "success",
+        "timing": "success"
+      },
+      "gray2bin": {
+        "synthesis": "success",
+        "timing": "success"
+      },
+      "icg": {
+        "synthesis": "success",
+        "timing": "success"
+      },
+      "latch": {
+        "synthesis": "success",
+        "timing": "success"
+      },
+      "mux": {
+        "synthesis": "success",
+        "timing": "success"
+      },
+      "muxcase": {
+        "synthesis": "success",
+        "timing": "success"
+      },
+      "muxhot": {
+        "synthesis": "success",
+        "timing": "success"
+      },
+      "muxpri": {
+        "synthesis": "success",
+        "timing": "success"
+      },
+      "onehot": {
+        "synthesis": "success",
+        "timing": "success"
+      },
+      "pipeline": {
+        "synthesis": "success",
+        "timing": "success"
+      },
+      "shiftreg": {
+        "synthesis": "success",
+        "timing": "success"
+      },
+      "tff": {
+        "synthesis": "success",
+        "timing": "success"
+      },
+      "tmr": {
+        "synthesis": "success",
+        "timing": "success"
       }
     }
   }

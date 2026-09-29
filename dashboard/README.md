@@ -42,6 +42,36 @@ open site/fpga.html
 # 5. commit results/db.json -> push -> Pages rebuilds automatically
 ```
 
+ASIC page (ASAP7 mapper comparison)
+-----------------------------------
+
+`results/asic/asap7.json` is a four-way mapper comparison on the `basic` group,
+all against the same ASAP7 libraries and the PDK's own `tech.tcl` clock:
+
+| column            | mapper                                                  |
+| ----------------- | ------------------------------------------------------- |
+| `yosys_asap7`     | yosys + ABC                                              |
+| `lhd_asap7`       | LiveHD `lhd synth` (default `synth.mapper=abc`)          |
+| `lhd_asap7_synth` | LiveHD `lhd synth --set synth.mapper=synth` (unate)      |
+| `tardigrade_asap7`| tardigrade                                               |
+
+The per-column `settings` line under each header is what distinguishes the two
+LiveHD columns; they differ only by `--set synth.mapper=synth`.
+
+Refresh it offline (the LiveHD columns need `../livehd/bazel-bin/lhd/lhd`):
+
+```bash
+lb syn -t asap7 -g basic --tool yosys                                            --publish
+lb syn -t asap7 -g basic --tool lhd                                              --publish
+lb syn -t asap7 -g basic --tool lhd --label synth --options="--set synth.mapper=synth" --publish
+# stage ONLY the asap7 collect files, then build the one-page database
+python dashboard/build_db.py --results <stage> --flat --out results --config asap7
+python dashboard/generate.py --db results/asic --out site/asic --title "ASIC Synthesis (ASAP7) - basic" --facets
+```
+
+`lb syn --label <tag>` is what keeps a second run of the same tool/PDK in its own
+`<tool>_<pdk>_<tag>.json` instead of clobbering the first.
+
 Where things live
 ------------------
 

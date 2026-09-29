@@ -225,6 +225,10 @@ Each synthesis timing job uses one OpenSTA thread; `lb -j` controls parallel
 benchmarks. This avoids oversubscription and contention in OpenSTA's shared
 parasitic lookup on large pre-PNR netlists.
 
+```
+uv run python -m http.server 8000 --bind 127.0.0.1 --directory build/dashboard
+```
+
 Run `bash lhd_run.sh` for all nine benchmark groups on ASAP7 and Sky130; it
 refreshes the dashboard even when individual benchmarks fail. `LB_JOBS` (1)
 and `LB_TIMEOUT` (1800 seconds per step) control scheduling. The targetless LHD
